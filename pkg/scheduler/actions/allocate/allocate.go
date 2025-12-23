@@ -18,12 +18,11 @@ package allocate
 
 import (
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	"math"
 	"slices"
 	"time"
-
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
 
 	"volcano.sh/apis/pkg/apis/scheduling"
 	"volcano.sh/volcano/pkg/scheduler/api"
@@ -189,8 +188,8 @@ func (alloc *Action) buildAllocateContext() *allocateContext {
 		actx.jobsByQueue[job.Queue].Push(job)
 		actx.jobWorksheet[job.UID] = worksheet
 
-		// job without any hard network topology policy use actx.tasksNoHardTopology
-		if !job.ContainsHardTopology() {
+		// job without any hard network topology policy and without SubGroupPolicy use actx.tasksNoHardTopology
+		if !job.ContainsHardTopology() && !job.ContainsSubJobPolicy() {
 			if subJobWorksheet, exist := worksheet.subJobWorksheets[job.DefaultSubJobID()]; exist {
 				actx.tasksNoHardTopology[job.UID] = subJobWorksheet.tasks
 			}
@@ -296,10 +295,10 @@ func (alloc *Action) allocateResources(actx *allocateContext) {
 
 		job := jobs.Pop().(*api.JobInfo)
 		updateJobTier(ssn.HyperNodeTierNameMap, job)
-		if job.ContainsHardTopology() {
+		if job.ContainsHardTopology() || job.ContainsSubJobPolicy() {
 			jobWorksheet := actx.jobWorksheet[job.UID]
 
-			klog.V(3).InfoS("Try to allocate resource for job contains hard topology", "queue", queue.Name, "job", job.UID,
+			klog.V(3).InfoS("Try to allocate resource for job with SubGroupPolicy or hard topology", "queue", queue.Name, "job", job.UID,
 				"allocatedHyperNode", job.AllocatedHyperNode, "subJobNum", jobWorksheet.subJobs.Len())
 			stmt := alloc.allocateForJob(job, jobWorksheet, ssn.HyperNodes[framework.ClusterTopHyperNode])
 			if stmt != nil && ssn.JobReady(job) { // do not commit stmt when job is pipelined
