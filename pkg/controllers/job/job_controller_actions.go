@@ -1107,7 +1107,7 @@ func getSubGroupPolicy(taskSpec batch.TaskSpec) scheduling.SubGroupPolicySpec {
 		subGroupPolicy.NetworkTopology = nt
 	}
 
-	if taskSpec.PartitionPolicy.MinPartitions > 0 {
+	if taskSpec.PartitionPolicy != nil && taskSpec.PartitionPolicy.MinPartitions > 0 {
 		subGroupPolicy.MinSubGroups = &taskSpec.PartitionPolicy.MinPartitions
 	}
 	return subGroupPolicy

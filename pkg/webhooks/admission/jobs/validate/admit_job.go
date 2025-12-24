@@ -344,7 +344,7 @@ func validatePartitionPolicy(task v1alpha1.TaskSpec, job *v1alpha1.Job) string {
 		} else if task.Replicas != task.PartitionPolicy.TotalPartitions*task.PartitionPolicy.PartitionSize {
 			msg += fmt.Sprintf("'Replicas' are not equal to TotalPartitions*PartitionSize in task: %s, job: %s", task.Name, job.Name)
 		} else if task.MinAvailable != nil && task.PartitionPolicy.MinPartitions*task.PartitionPolicy.PartitionSize != *task.MinAvailable {
-			msg += fmt.Sprintf("'MinAvailable' are not equal to MinPartitions*PartitionSize in task: %s, job: %s", task.Name, job.Name)
+			msg += fmt.Sprintf("'MinAvailable' is not equal to MinPartitions*PartitionSize in task: %s, job: %s", task.Name, job.Name)
 		}
 		msg += validateNetworkTopology(task.PartitionPolicy.NetworkTopology)
 	}

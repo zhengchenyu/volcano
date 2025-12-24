@@ -1406,6 +1406,21 @@ func TestGetSubGroupPolicy(t *testing.T) {
 			ExpectedSubGroupSize: ptr.To(int32(3)),
 			Description:          "MinSubGroups should equal TotalPartitions when MinPartitions equals TotalPartitions",
 		},
+		{
+			Name: "SubGroupPolicy with MinPartitions not set",
+			TaskSpec: v1alpha1.TaskSpec{
+				Name:     "task1",
+				Replicas: 6,
+				PartitionPolicy: &v1alpha1.PartitionPolicySpec{
+					TotalPartitions: 2,
+					MinPartitions:   0,
+					PartitionSize:   3,
+				},
+			},
+			ExpectedMinSubGroups: nil,
+			ExpectedSubGroupSize: ptr.To(int32(3)),
+			Description:          "MinSubGroups should be nil when MinPartitions is 0",
+		},
 	}
 
 	for _, tc := range testCases {

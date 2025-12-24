@@ -1642,7 +1642,7 @@ func TestValidateJobCreate(t *testing.T) {
 				},
 			},
 			reviewResponse: admissionv1.AdmissionResponse{Allowed: true},
-			ret:            "'MinAvailable' are not equal to MinPartitions*PartitionSize in task: task-1, job: task-with-invalid-PartitionPolicy-MinPartitions",
+			ret:            "'MinAvailable' is not equal to MinPartitions*PartitionSize in task: task-1, job: task-with-invalid-PartitionPolicy-MinPartitions",
 			ExpectErr:      true,
 		},
 		{
