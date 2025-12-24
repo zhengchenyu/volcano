@@ -266,3 +266,213 @@ func TestCreatePatchExecution(t *testing.T) {
 	}
 
 }
+
+func TestMutateSpecPartitionPolicyDefaults(t *testing.T) {
+	namespace := "test"
+
+	testCases := []struct {
+		Name          string
+		InputTasks    []v1alpha1.TaskSpec
+		ExpectedTasks []v1alpha1.TaskSpec
+		ShouldMutate  bool
+		Description   string
+	}{
+		{
+			Name: "MinPartitions defaults to TotalPartitions when not set",
+			InputTasks: []v1alpha1.TaskSpec{
+				{
+					Name:     "task-1",
+					Replicas: 6,
+					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
+						TotalPartitions: 2,
+						MinPartitions:   0,
+						PartitionSize:   3,
+					},
+					Template: v1.PodTemplateSpec{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{Name: "test", Image: "busybox:1.24"},
+							},
+						},
+					},
+				},
+			},
+			ExpectedTasks: []v1alpha1.TaskSpec{
+				{
+					Name:     "task-1",
+					Replicas: 6,
+					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
+						TotalPartitions: 2,
+						MinPartitions:   2, // Should be set to TotalPartitions
+						PartitionSize:   3,
+					},
+					MinAvailable: ptr.To(int32(6)), // 2 * 3
+					MaxRetry:     defaultMaxRetry,
+					Template: v1.PodTemplateSpec{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{Name: "test", Image: "busybox:1.24"},
+							},
+						},
+					},
+				},
+			},
+			ShouldMutate: true,
+			Description:  "When MinPartitions is 0, it should default to TotalPartitions",
+		},
+		{
+			Name: "MinAvailable is set to MinPartitions * PartitionSize when PartitionPolicy exists",
+			InputTasks: []v1alpha1.TaskSpec{
+				{
+					Name:     "task-1",
+					Replicas: 9,
+					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
+						TotalPartitions: 3,
+						MinPartitions:   2,
+						PartitionSize:   3,
+					},
+					Template: v1.PodTemplateSpec{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{Name: "test", Image: "busybox:1.24"},
+							},
+						},
+					},
+				},
+			},
+			ExpectedTasks: []v1alpha1.TaskSpec{
+				{
+					Name:     "task-1",
+					Replicas: 9,
+					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
+						TotalPartitions: 3,
+						MinPartitions:   2,
+						PartitionSize:   3,
+					},
+					MinAvailable: ptr.To(int32(6)), // 2 * 3
+					MaxRetry:     defaultMaxRetry,
+					Template: v1.PodTemplateSpec{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{Name: "test", Image: "busybox:1.24"},
+							},
+						},
+					},
+				},
+			},
+			ShouldMutate: true,
+			Description:  "MinAvailable should be set to MinPartitions * PartitionSize",
+		},
+		{
+			Name: "MinAvailable is set to Replicas when no PartitionPolicy",
+			InputTasks: []v1alpha1.TaskSpec{
+				{
+					Name:     "task-1",
+					Replicas: 5,
+					Template: v1.PodTemplateSpec{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{Name: "test", Image: "busybox:1.24"},
+							},
+						},
+					},
+				},
+			},
+			ExpectedTasks: []v1alpha1.TaskSpec{
+				{
+					Name:         "task-1",
+					Replicas:     5,
+					MinAvailable: ptr.To(int32(5)), // Should equal Replicas
+					MaxRetry:     defaultMaxRetry,
+					Template: v1.PodTemplateSpec{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{Name: "test", Image: "busybox:1.24"},
+							},
+						},
+					},
+				},
+			},
+			ShouldMutate: true,
+			Description:  "MinAvailable should be set to Replicas when no PartitionPolicy",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			job := &v1alpha1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-job",
+					Namespace: namespace,
+				},
+				Spec: v1alpha1.JobSpec{
+					Tasks: tc.InputTasks,
+				},
+			}
+
+			result := mutateSpec(job.Spec.Tasks, "/spec/tasks", job)
+
+			if tc.ShouldMutate && result == nil {
+				t.Errorf("%s: Expected mutation but got nil", tc.Description)
+				return
+			}
+
+			if !tc.ShouldMutate && result != nil {
+				t.Errorf("%s: Expected no mutation but got result", tc.Description)
+				return
+			}
+
+			if result != nil {
+				actualTasks, ok := result.Value.([]v1alpha1.TaskSpec)
+				if !ok {
+					t.Errorf("%s: Expected result value to be []v1alpha1.TaskSpec", tc.Description)
+					return
+				}
+
+				for i, expectedTask := range tc.ExpectedTasks {
+					if i >= len(actualTasks) {
+						t.Errorf("%s: Missing task at index %d", tc.Description, i)
+						continue
+					}
+
+					actualTask := actualTasks[i]
+
+					// Check PartitionPolicy.MinPartitions
+					if expectedTask.PartitionPolicy != nil {
+						if actualTask.PartitionPolicy == nil {
+							t.Errorf("%s: Expected PartitionPolicy but got nil", tc.Description)
+							continue
+						}
+						if actualTask.PartitionPolicy.MinPartitions != expectedTask.PartitionPolicy.MinPartitions {
+							t.Errorf("%s: Expected MinPartitions=%d, got %d",
+								tc.Description,
+								expectedTask.PartitionPolicy.MinPartitions,
+								actualTask.PartitionPolicy.MinPartitions)
+						}
+					}
+
+					// Check MinAvailable
+					if expectedTask.MinAvailable != nil {
+						if actualTask.MinAvailable == nil {
+							t.Errorf("%s: Expected MinAvailable=%d, got nil",
+								tc.Description, *expectedTask.MinAvailable)
+						} else if *actualTask.MinAvailable != *expectedTask.MinAvailable {
+							t.Errorf("%s: Expected MinAvailable=%d, got %d",
+								tc.Description,
+								*expectedTask.MinAvailable,
+								*actualTask.MinAvailable)
+						}
+					}
+
+					// Check MaxRetry
+					if actualTask.MaxRetry != expectedTask.MaxRetry {
+						t.Errorf("%s: Expected MaxRetry=%d, got %d",
+							tc.Description,
+							expectedTask.MaxRetry,
+							actualTask.MaxRetry)
+					}
+				}
+			}
+		})
+	}
+}
