@@ -199,7 +199,7 @@ func TestCreatePatchExecution(t *testing.T) {
 				{
 					Name:         v1alpha1.DefaultTaskSpec + "3",
 					Replicas:     1,
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: ptr.To(int32(0)),
 					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
 						TotalPartitions: 1,
 						PartitionSize:   1,
@@ -278,49 +278,6 @@ func TestMutateSpecPartitionPolicyDefaults(t *testing.T) {
 		ShouldMutate  bool
 		Description   string
 	}{
-		{
-			Name: "MinPartitions defaults to TotalPartitions when not set",
-			InputTasks: []v1alpha1.TaskSpec{
-				{
-					Name:     "task-1",
-					Replicas: 6,
-					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
-						TotalPartitions: 2,
-						MinPartitions:   0,
-						PartitionSize:   3,
-					},
-					Template: v1.PodTemplateSpec{
-						Spec: v1.PodSpec{
-							Containers: []v1.Container{
-								{Name: "test", Image: "busybox:1.24"},
-							},
-						},
-					},
-				},
-			},
-			ExpectedTasks: []v1alpha1.TaskSpec{
-				{
-					Name:     "task-1",
-					Replicas: 6,
-					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
-						TotalPartitions: 2,
-						MinPartitions:   2, // Should be set to TotalPartitions
-						PartitionSize:   3,
-					},
-					MinAvailable: ptr.To(int32(6)), // 2 * 3
-					MaxRetry:     defaultMaxRetry,
-					Template: v1.PodTemplateSpec{
-						Spec: v1.PodSpec{
-							Containers: []v1.Container{
-								{Name: "test", Image: "busybox:1.24"},
-							},
-						},
-					},
-				},
-			},
-			ShouldMutate: true,
-			Description:  "When MinPartitions is 0, it should default to TotalPartitions",
-		},
 		{
 			Name: "MinAvailable is set to MinPartitions * PartitionSize when PartitionPolicy exists",
 			InputTasks: []v1alpha1.TaskSpec{
