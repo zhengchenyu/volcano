@@ -170,8 +170,9 @@ func TestCreatePatchExecution(t *testing.T) {
 					},
 				},
 				{
-					Name:     v1alpha1.DefaultTaskSpec + "2",
-					Replicas: 1,
+					Name:         v1alpha1.DefaultTaskSpec + "2",
+					Replicas:     1,
+					MinAvailable: ptr.To(int32(1)),
 					PartitionPolicy: &v1alpha1.PartitionPolicySpec{
 						TotalPartitions: 1,
 						MinPartitions:   1,

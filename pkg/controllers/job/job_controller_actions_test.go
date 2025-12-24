@@ -1417,7 +1417,7 @@ func TestGetSubGroupPolicy(t *testing.T) {
 					PartitionSize:   3,
 				},
 			},
-			ExpectedMinSubGroups: nil,
+			ExpectedMinSubGroups: ptr.To(int32(0)),
 			ExpectedSubGroupSize: ptr.To(int32(3)),
 			Description:          "MinSubGroups should be nil when MinPartitions is 0",
 		},

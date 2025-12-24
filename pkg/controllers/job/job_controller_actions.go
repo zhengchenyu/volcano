@@ -1083,6 +1083,7 @@ func getSubGroupPolicy(taskSpec batch.TaskSpec) scheduling.SubGroupPolicySpec {
 	subGroupPolicy := scheduling.SubGroupPolicySpec{
 		Name:         taskSpec.Name,
 		SubGroupSize: &taskSpec.PartitionPolicy.PartitionSize,
+		MinSubGroups: &taskSpec.PartitionPolicy.MinPartitions,
 	}
 
 	// Set LabelSelector
@@ -1107,8 +1108,5 @@ func getSubGroupPolicy(taskSpec batch.TaskSpec) scheduling.SubGroupPolicySpec {
 		subGroupPolicy.NetworkTopology = nt
 	}
 
-	if taskSpec.PartitionPolicy != nil && taskSpec.PartitionPolicy.MinPartitions > 0 {
-		subGroupPolicy.MinSubGroups = &taskSpec.PartitionPolicy.MinPartitions
-	}
 	return subGroupPolicy
 }
