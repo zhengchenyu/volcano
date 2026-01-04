@@ -506,3 +506,23 @@ func (s *Statement) outputOperations(msg string, level klog.Level) {
 	}
 	klog.V(level).Info(msg, buffer)
 }
+
+// GetTasksFromAllocateOperations returns tasks from Allocate operations only.
+func (s *Statement) GetTasksFromAllocateOperations() map[api.TaskID]*api.TaskInfo {
+	tasks := make(map[api.TaskID]*api.TaskInfo)
+	for _, op := range s.operations {
+		if op.name == Allocate && op.task != nil {
+			tasks[op.task.UID] = op.task
+		}
+	}
+	return tasks
+}
+
+// AddOperationForTest adds an operation to the statement for testing purposes.
+func (s *Statement) AddOperationForTest(opType Operation, task *api.TaskInfo, reason string) {
+	s.operations = append(s.operations, operation{
+		name:   opType,
+		task:   task,
+		reason: reason,
+	})
+}

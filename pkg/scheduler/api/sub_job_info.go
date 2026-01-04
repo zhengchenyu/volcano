@@ -199,7 +199,8 @@ func getSubJobMatchValues(policy scheduling.SubGroupPolicySpec, pod *v1.Pod) []s
 	return matchValues
 }
 
-func getSubJobGID(job JobID, policy string) SubJobGID {
+// GetSubJobGID returns the SubJobGID for a given job and policy name
+func GetSubJobGID(job JobID, policy string) SubJobGID {
 	return SubJobGID(fmt.Sprintf("%s/%s", job, policy))
 }
 

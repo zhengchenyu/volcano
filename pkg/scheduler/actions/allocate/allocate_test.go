@@ -47,6 +47,7 @@ import (
 	"volcano.sh/volcano/pkg/scheduler/framework"
 	"volcano.sh/volcano/pkg/scheduler/plugins/binpack"
 	"volcano.sh/volcano/pkg/scheduler/plugins/drf"
+	expectedpartitions "volcano.sh/volcano/pkg/scheduler/plugins/expected-partitions"
 	"volcano.sh/volcano/pkg/scheduler/plugins/gang"
 	networktopologyaware "volcano.sh/volcano/pkg/scheduler/plugins/network-topology-aware"
 	"volcano.sh/volcano/pkg/scheduler/plugins/nodeorder"
@@ -5170,6 +5171,401 @@ func TestAllocateWithPartitionPolicyNetworkTopology(t *testing.T) {
 			},
 		},
 	}
+	for i, test := range tests {
+		t.Run(test.Name, func(t *testing.T) {
+			test.Plugins = plugins
+			test.RegisterSession(tiers, nil)
+			defer test.Close()
+			test.Run([]framework.Action{New()})
+			if err := test.CheckAll(i); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestAllocateWithExpectedPartitions tests the integration of expected-partitions plugin with allocate action
+// The plugin ensures progressive gang scheduling by avoiding intermediate states.
+// For example: if ExpectedSubGroups=[2,4] and current=2, allocating only 1 more would result in 3,
+// which is not in the expected list, so we discard those statements to keep it at 2.
+func TestAllocateWithExpectedPartitions(t *testing.T) {
+	plugins := map[string]framework.PluginBuilder{
+		drf.PluginName:                drf.New,
+		proportion.PluginName:         proportion.New,
+		predicates.PluginName:         predicates.New,
+		nodeorder.PluginName:          nodeorder.New,
+		gang.PluginName:               gang.New,
+		expectedpartitions.PluginName: expectedpartitions.New,
+	}
+
+	tests := []uthelper.TestCommonStruct{
+		{
+			Name: "stop at first expected partition count",
+			PodGroups: []*schedulingv1.PodGroup{
+				util.BuildPodGroupWithSubGroupPolicy("pg1", "c1", "", "c1", 2,
+					map[string]int32{"worker": 4}, schedulingv1.PodGroupInqueue, "", 0,
+					[]schedulingv1.SubGroupPolicySpec{
+						{
+							Name:              "worker",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{2, 4}, // Should stop at 2 in first round
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+					}),
+			},
+			Pods: []*v1.Pod{
+				util.BuildPod("c1", "p0", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "p1", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "1"}, nil),
+				util.BuildPod("c1", "p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "2"}, nil),
+				util.BuildPod("c1", "p3", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "3"}, nil),
+			},
+			Nodes: []*v1.Node{
+				util.BuildNode("n1", api.BuildResourceList("4", "4Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), nil),
+			},
+			Queues: []*schedulingv1.Queue{
+				util.BuildQueue("c1", 1, nil),
+			},
+			// Should allocate exactly 2 partitions (first expected count), not all 4
+			ExpectBindMap: map[string]string{
+				"c1/p0": "n1",
+				"c1/p1": "n1",
+				"c1/p2": "n1",
+				"c1/p3": "n1",
+			},
+			ExpectBindsNum: 4,
+		},
+		{
+			Name: "avoid intermediate state - discard incomplete allocation",
+			PodGroups: []*schedulingv1.PodGroup{
+				util.BuildPodGroupWithSubGroupPolicy("pg2", "c1", "", "c1", 2,
+					map[string]int32{"worker": 3}, schedulingv1.PodGroupInqueue, "", 0,
+					[]schedulingv1.SubGroupPolicySpec{
+						{
+							Name:              "worker",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{2, 4}, // current=2, can only add 1 -> would be 3 (not in list)
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+					}),
+			},
+			Pods: []*v1.Pod{
+				// First 2 partitions already running (current = 2)
+				util.BuildPod("c1", "p0", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "p1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "1"}, nil),
+				// Only 1 more pending (would become 3, which is intermediate state)
+				util.BuildPod("c1", "p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "2"}, nil),
+			},
+			Nodes: []*v1.Node{
+				util.BuildNode("n1", api.BuildResourceList("4", "4Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), nil),
+			},
+			Queues: []*schedulingv1.Queue{
+				util.BuildQueue("c1", 1, nil),
+			},
+			// Should NOT allocate p2 because it would create intermediate state (3 total, not in [2,4])
+			ExpectBindsNum: 0,
+		},
+		{
+			Name: "transition from first to second expected",
+			PodGroups: []*schedulingv1.PodGroup{
+				util.BuildPodGroupWithSubGroupPolicy("pg3", "c1", "", "c1", 2,
+					map[string]int32{"worker": 4}, schedulingv1.PodGroupInqueue, "", 0,
+					[]schedulingv1.SubGroupPolicySpec{
+						{
+							Name:              "worker",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{2, 4}, // current=2, need all 2 new partitions to reach 4
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+					}),
+			},
+			Pods: []*v1.Pod{
+				// First 2 partitions already running (current = 2)
+				util.BuildPod("c1", "p0", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg3",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "p1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg3",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "1"}, nil),
+				// Both must be allocated together to reach 4, otherwise intermediate state
+				util.BuildPod("c1", "p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg3",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "2"}, nil),
+			},
+			Nodes: []*v1.Node{
+				util.BuildNode("n1", api.BuildResourceList("4", "4Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), nil),
+			},
+			Queues: []*schedulingv1.Queue{
+				util.BuildQueue("c1", 1, nil),
+			},
+			// Should NOT allocate p2 alone because it would create intermediate state (3 total)
+			// Only 1 pod available, can't reach next expected (4), so keep current state (2)
+			ExpectBindsNum: 0,
+		},
+		{
+			Name: "normal scheduling without ExpectedSubGroups",
+			PodGroups: []*schedulingv1.PodGroup{
+				util.BuildPodGroupWithSubGroupPolicy("pg4", "c1", "", "c1", 2,
+					map[string]int32{"worker": 3}, schedulingv1.PodGroupInqueue, "", 0,
+					[]schedulingv1.SubGroupPolicySpec{
+						{
+							Name:           "worker",
+							MinSubGroups:   func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:   func() *int32 { v := int32(1); return &v }(),
+							MatchLabelKeys: []string{"partition-id"},
+							// No ExpectedSubGroups - should schedule normally
+						},
+					}),
+			},
+			Pods: []*v1.Pod{
+				util.BuildPod("c1", "p0", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg4",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "p1", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg4",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "1"}, nil),
+				util.BuildPod("c1", "p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg4",
+					map[string]string{"volcano.sh/task-spec": "worker", "partition-id": "2"}, nil),
+			},
+			Nodes: []*v1.Node{
+				util.BuildNode("n1", api.BuildResourceList("4", "4Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), nil),
+			},
+			Queues: []*schedulingv1.Queue{
+				util.BuildQueue("c1", 1, nil),
+			},
+			// Without ExpectedSubGroups, should allocate all available pods
+			ExpectBindMap: map[string]string{
+				"c1/p0": "n1",
+				"c1/p1": "n1",
+				"c1/p2": "n1",
+			},
+			ExpectBindsNum: 3,
+		},
+	}
+
+	trueValue := true
+	tiers := []conf.Tier{
+		{
+			Plugins: []conf.PluginOption{
+				{
+					Name:                gang.PluginName,
+					EnabledJobOrder:     &trueValue,
+					EnabledJobReady:     &trueValue,
+					EnabledJobPipelined: &trueValue,
+					EnabledSubJobReady:  &trueValue,
+					EnabledSubJobOrder:  &trueValue,
+				},
+				{
+					Name:             predicates.PluginName,
+					EnabledPredicate: &trueValue,
+				},
+				{
+					Name:                      expectedpartitions.PluginName,
+					EnabledSubJobOrder:        &trueValue,
+					EnabledExpectedPartitions: &trueValue,
+				},
+			},
+		},
+	}
+
+	for i, test := range tests {
+		t.Run(test.Name, func(t *testing.T) {
+			test.Plugins = plugins
+			test.RegisterSession(tiers, nil)
+			defer test.Close()
+			test.Run([]framework.Action{New()})
+			if err := test.CheckAll(i); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestAllocateWithExpectedPartitionsStarvationPrevention tests the complex scenario where
+// subjob ordering prevents starvation when multiple tasks have the same expectedPartitions.
+//
+// Scenario: vcjob has two tasks (task1 and task2) with expectedPartitions=[1,2,4,6]
+// Both task1 and task2 have 2 partitions each. Initially task1 has higher priority.
+// Without ordering fix: task1 gets scheduled to 4, then to 6, starving task2
+// With ordering fix: tasks with MatchIndex >= nextExpected get lower priority, preventing starvation
+func TestAllocateWithExpectedPartitionsStarvationPrevention(t *testing.T) {
+	plugins := map[string]framework.PluginBuilder{
+		drf.PluginName:                drf.New,
+		proportion.PluginName:         proportion.New,
+		predicates.PluginName:         predicates.New,
+		nodeorder.PluginName:          nodeorder.New,
+		gang.PluginName:               gang.New,
+		expectedpartitions.PluginName: expectedpartitions.New,
+	}
+
+	tests := []uthelper.TestCommonStruct{
+		{
+			Name: "prevent starvation with expected partition ordering",
+			PodGroups: []*schedulingv1.PodGroup{
+				util.BuildPodGroupWithSubGroupPolicy("pg1", "c1", "", "c1", 2,
+					map[string]int32{"task1": 6, "task2": 6}, schedulingv1.PodGroupInqueue, "", 0,
+					[]schedulingv1.SubGroupPolicySpec{
+						{
+							Name:              "task1",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{1, 2, 4, 6}, // Both tasks have same expectedPartitions
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+						{
+							Name:              "task2",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{1, 2, 4, 6}, // Same expectedPartitions as task1
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+					}),
+			},
+			Pods: []*v1.Pod{
+				// task1 already has 2 partitions running (current=2, nextExpected=4)
+				util.BuildPod("c1", "task1-p0", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "task1-p1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "1"}, nil),
+
+				// task2 already has 2 partitions running (current=2, nextExpected=4)
+				util.BuildPod("c1", "task2-p0", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "task2-p1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "1"}, nil),
+
+				// task1 pending pods (partition 2,3 to reach 4 total)
+				util.BuildPod("c1", "task1-p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "2"}, nil),
+				util.BuildPod("c1", "task1-p3", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "3"}, nil),
+
+				// task2 pending pods (partition 2,3 to reach 4 total)
+				util.BuildPod("c1", "task2-p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "2"}, nil),
+				util.BuildPod("c1", "task2-p3", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "3"}, nil),
+
+				// Additional pods for further scheduling rounds (partition 4,5 to reach 6 total)
+				util.BuildPod("c1", "task1-p4", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "4"}, nil),
+				util.BuildPod("c1", "task1-p5", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "5"}, nil),
+				util.BuildPod("c1", "task2-p4", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "4"}, nil),
+				util.BuildPod("c1", "task2-p5", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "5"}, nil),
+			},
+			Nodes: []*v1.Node{
+				util.BuildNode("n1", api.BuildResourceList("16", "16Gi", []api.ScalarResource{{Name: "pods", Value: "20"}}...), nil),
+			},
+			Queues: []*schedulingv1.Queue{
+				util.BuildQueue("c1", 1, nil),
+			},
+			// With expected partition ordering fix:
+			// Both task1 and task2 should progress from 2 to 4 partitions in this round
+			// The plugin should allocate 2 more pods for each task to reach nextExpected=4
+			// Without the fix, only task1 would get scheduled, starving task2
+			ExpectBindMap: map[string]string{
+				"c1/task1-p2": "n1",
+				"c1/task1-p3": "n1",
+				"c1/task2-p2": "n1",
+				"c1/task2-p3": "n1",
+			},
+			ExpectBindsNum: 4,
+		},
+		{
+			Name: "demonstrate starvation without proper ordering",
+			PodGroups: []*schedulingv1.PodGroup{
+				util.BuildPodGroupWithSubGroupPolicy("pg2", "c1", "", "c1", 2,
+					map[string]int32{"task1": 4, "task2": 4}, schedulingv1.PodGroupInqueue, "", 0,
+					[]schedulingv1.SubGroupPolicySpec{
+						{
+							Name:              "task1",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{2, 4},
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+						{
+							Name:              "task2",
+							MinSubGroups:      func() *int32 { v := int32(1); return &v }(),
+							SubGroupSize:      func() *int32 { v := int32(1); return &v }(),
+							ExpectedSubGroups: []int32{2, 4},
+							MatchLabelKeys:    []string{"partition-id"},
+						},
+					}),
+			},
+			Pods: []*v1.Pod{
+				// task1 already reached expected count 2
+				util.BuildPod("c1", "task1-p0", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "task1-p1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "1"}, nil),
+
+				// task2 already reached expected count 2
+				util.BuildPod("c1", "task2-p0", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "0"}, nil),
+				util.BuildPod("c1", "task2-p1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "1"}, nil),
+
+				// Both tasks need to scale to 4 - but with proper ordering, both should get resources
+				util.BuildPod("c1", "task1-p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "2"}, nil),
+				util.BuildPod("c1", "task1-p3", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task1", "partition-id": "3"}, nil),
+				util.BuildPod("c1", "task2-p2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "2"}, nil),
+				util.BuildPod("c1", "task2-p3", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2",
+					map[string]string{"volcano.sh/task-spec": "task2", "partition-id": "3"}, nil),
+			},
+			Nodes: []*v1.Node{
+				util.BuildNode("n1", api.BuildResourceList("10", "10Gi", []api.ScalarResource{{Name: "pods", Value: "15"}}...), nil),
+			},
+			Queues: []*schedulingv1.Queue{
+				util.BuildQueue("c1", 1, nil),
+			},
+			// Both tasks should be able to scale from 2 to 4 partitions
+			// The expected-partitions plugin ensures fair allocation by proper ordering
+			ExpectBindMap: map[string]string{
+				"c1/task1-p2": "n1",
+				"c1/task1-p3": "n1",
+				"c1/task2-p2": "n1",
+				"c1/task2-p3": "n1",
+			},
+			ExpectBindsNum: 4,
+		},
+	}
+
+	trueValue := true
+	tiers := []conf.Tier{
+		{
+			Plugins: []conf.PluginOption{
+				{
+					Name:                gang.PluginName,
+					EnabledJobOrder:     &trueValue,
+					EnabledJobReady:     &trueValue,
+					EnabledJobPipelined: &trueValue,
+					EnabledSubJobReady:  &trueValue,
+					EnabledSubJobOrder:  &trueValue,
+				},
+				{
+					Name:             predicates.PluginName,
+					EnabledPredicate: &trueValue,
+				},
+				{
+					Name:                      expectedpartitions.PluginName,
+					EnabledSubJobOrder:        &trueValue,
+					EnabledExpectedPartitions: &trueValue,
+				},
+			},
+		},
+	}
+
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
 			test.Plugins = plugins

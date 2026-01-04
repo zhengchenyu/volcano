@@ -309,6 +309,9 @@ func (alloc *Action) allocateResources(actx *allocateContext) {
 				ssn.MarkJobDirty(job.UID)
 				alloc.recorder.UpdateDecisionToJob(job, ssn.HyperNodes)
 
+				// Notify plugins that job has been allocated
+				ssn.JobAllocated(job, []*framework.Statement{stmt})
+
 				// There are still left tasks that need to be allocated when min available < replicas, put the job back
 				if !jobWorksheet.Empty() {
 					jobs.Push(job)
@@ -322,6 +325,9 @@ func (alloc *Action) allocateResources(actx *allocateContext) {
 				stmt := alloc.allocateResourcesForTasks(subJob, tasks, framework.ClusterTopHyperNode)
 				if stmt != nil && ssn.JobReady(job) { // do not commit stmt when job is pipelined
 					stmt.Commit()
+
+					// Notify plugins that job has been allocated
+					ssn.JobAllocated(job, []*framework.Statement{stmt})
 
 					// There are still left tasks that need to be allocated when min available < replicas, put the job back
 					if tasks.Len() > 0 {
@@ -379,7 +385,7 @@ func (alloc *Action) allocateForJob(job *api.JobInfo, jobWorksheet *JobWorksheet
 						jobWorksheetCopy.subJobs.Push(subJob)
 					}
 
-					if ssn.JobReady(job) {
+					if ssn.JobReady(job) && ssn.ExpectedJobReady(job, stmtList) {
 						break
 					}
 				}
@@ -387,6 +393,8 @@ func (alloc *Action) allocateForJob(job *api.JobInfo, jobWorksheet *JobWorksheet
 			// reset the subJobs to initial status
 			alloc.recorder.RecoverSubJobStatus(job)
 
+			// Discard subgroups that do not meet the next expected
+			stmtList = ssn.DiscardStatements(job, stmtList)
 			mergedStmt := framework.SaveOperations(stmtList...)
 			if len(mergedStmt.Operations()) == 0 {
 				continue // skip recording this empty solution

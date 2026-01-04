@@ -102,6 +102,8 @@ type PluginOption struct {
 	EnabledSubJobOrder *bool `yaml:"enabledSubJobOrder"`
 	// EnabledHyperNodeGradient defines whether hyperNodeGradientFn is enabled
 	EnabledHyperNodeGradient *bool `yaml:"enabledHyperNodeGradient"`
+	// EnabledExpectedPartitions defines whether expectedPartitions is enabled
+	EnabledExpectedPartitions *bool `yaml:"enabledExpectedPartitions"`
 	// Arguments defines the different arguments that can be given to different plugins
 	Arguments map[string]interface{} `yaml:"arguments"`
 }

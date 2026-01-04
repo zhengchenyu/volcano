@@ -28,6 +28,7 @@ import (
 	"volcano.sh/volcano/pkg/scheduler/plugins/conformance"
 	"volcano.sh/volcano/pkg/scheduler/plugins/deviceshare"
 	"volcano.sh/volcano/pkg/scheduler/plugins/drf"
+	expectedpartitions "volcano.sh/volcano/pkg/scheduler/plugins/expected-partitions"
 	"volcano.sh/volcano/pkg/scheduler/plugins/extender"
 	"volcano.sh/volcano/pkg/scheduler/plugins/gang"
 	networktopologyaware "volcano.sh/volcano/pkg/scheduler/plugins/network-topology-aware"
@@ -70,6 +71,7 @@ func init() {
 	framework.RegisterPluginBuilder(pdb.PluginName, pdb.New)
 	framework.RegisterPluginBuilder(nodegroup.PluginName, nodegroup.New)
 	framework.RegisterPluginBuilder(networktopologyaware.PluginName, networktopologyaware.New)
+	framework.RegisterPluginBuilder(expectedpartitions.PluginName, expectedpartitions.New)
 
 	// Plugins for Queues
 	framework.RegisterPluginBuilder(proportion.PluginName, proportion.New)

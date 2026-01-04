@@ -208,6 +208,21 @@ func (ssn *Session) AddHyperNodeGradientForSubJobFn(name string, fn api.HyperNod
 	ssn.hyperNodeGradientForSubJobFns[name] = fn
 }
 
+// AddExpectedJobReadyFn add ExpectedJobReadyFn function
+func (ssn *Session) AddExpectedJobReadyFn(name string, fn api.ExpectedJobReadyFns) {
+	ssn.expectedJobReadyFns[name] = fn
+}
+
+// AddDiscardStatementsFn add DiscardStatementsFns function
+func (ssn *Session) AddDiscardStatementsFn(name string, fn api.DiscardStatementsFns) {
+	ssn.discardStatementsFns[name] = fn
+}
+
+// AddJobAllocatedFn adds job allocated function
+func (ssn *Session) AddJobAllocatedFn(name string, fn api.JobAllocatedFn) {
+	ssn.jobAllocatedFns[name] = fn
+}
+
 // Reclaimable invoke reclaimable function of the plugins
 func (ssn *Session) Reclaimable(reclaimer *api.TaskInfo, reclaimees []*api.TaskInfo) []*api.TaskInfo {
 	var victims []*api.TaskInfo
@@ -1112,6 +1127,74 @@ func (ssn *Session) BuildVictimsPriorityQueue(victims []*api.TaskInfo, preemptor
 		victimsQueue.Push(victim)
 	}
 	return victimsQueue
+}
+
+// ExpectedJobReady invoke expectedJobReadyFns function of the plugins
+func (ssn *Session) ExpectedJobReady(job *api.JobInfo, stmtList []*Statement) bool {
+	for _, tier := range ssn.Tiers {
+		for _, plugin := range tier.Plugins {
+			if !isEnabled(plugin.EnabledExpectedPartitions) {
+				continue
+			}
+
+			fn, found := ssn.expectedJobReadyFns[plugin.Name]
+			if !found {
+				continue
+			}
+
+			if !fn(job, stmtList) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// DiscardStatements invoke discardStatementsFns function of the plugins
+func (ssn *Session) DiscardStatements(job *api.JobInfo, stmtList []*Statement) []*Statement {
+	for _, tier := range ssn.Tiers {
+		for _, plugin := range tier.Plugins {
+			if !isEnabled(plugin.EnabledExpectedPartitions) {
+				continue
+			}
+
+			fn, found := ssn.discardStatementsFns[plugin.Name]
+			if !found {
+				continue
+			}
+
+			// Only one discardStatementsFns is registered, so return directly for better performance.
+			result := fn(job, stmtList)
+			// Type assertion: convert interface{} back to []*Statement
+			if resultStmts, ok := result.([]*Statement); ok {
+				return resultStmts
+			}
+			// If type assertion fails, return original list
+			return stmtList
+		}
+	}
+
+	return stmtList
+}
+
+// JobAllocated invokes jobAllocatedFns function of the plugins
+// This is called after a job has been allocated resources and the statement has been committed.
+func (ssn *Session) JobAllocated(job *api.JobInfo, stmtList []*Statement) {
+	for _, tier := range ssn.Tiers {
+		for _, plugin := range tier.Plugins {
+			if !isEnabled(plugin.EnabledExpectedPartitions) {
+				continue
+			}
+
+			fn, found := ssn.jobAllocatedFns[plugin.Name]
+			if !found {
+				continue
+			}
+
+			fn(job, stmtList)
+		}
+	}
 }
 
 // RegisterBinder registers the passed binder to the cache, the binder type can be such as pre-binder, post-binder

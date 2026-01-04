@@ -459,7 +459,7 @@ func (ji *JobInfo) SetPodGroup(pg *PodGroup) {
 		}
 		clear(ji.MinSubJobs)
 		for _, policy := range pg.Spec.SubGroupPolicy {
-			groupID := getSubJobGID(ji.UID, policy.Name)
+			groupID := GetSubJobGID(ji.UID, policy.Name)
 			if policy.MinSubGroups == nil {
 				ji.MinSubJobs[groupID] = 0
 			} else {
@@ -1254,7 +1254,7 @@ func (ji *JobInfo) getOrCreateSubJob(ti *TaskInfo) *SubJobInfo {
 
 	for _, policy := range ji.PodGroup.Spec.SubGroupPolicy {
 		if matchValues := getSubJobMatchValues(policy, ti.Pod); len(matchValues) > 0 {
-			groupID := getSubJobGID(ji.UID, policy.Name)
+			groupID := GetSubJobGID(ji.UID, policy.Name)
 			subJobID := getSubJobID(ji.UID, policy.Name, matchValues)
 			if _, found := ji.SubJobs[subJobID]; !found {
 				ji.SubJobs[subJobID] = NewSubJobInfo(groupID, subJobID, ji.UID, &policy, matchValues)

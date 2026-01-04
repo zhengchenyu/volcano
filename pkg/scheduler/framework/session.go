@@ -153,6 +153,10 @@ type Session struct {
 	hyperNodeGradientForJobFns    map[string]api.HyperNodeGradientForJobFn
 	hyperNodeGradientForSubJobFns map[string]api.HyperNodeGradientForSubJobFn
 
+	expectedJobReadyFns  map[string]api.ExpectedJobReadyFns
+	discardStatementsFns map[string]api.DiscardStatementsFns
+	jobAllocatedFns      map[string]api.JobAllocatedFn
+
 	// cycleStatesMap is used to temporarily store the scheduling status of each pod, its life cycle is same as Session.
 	// Because state needs to be passed between different extension points (not only used in PreFilter and Filter),
 	// in order to avoid different Pod scheduling states from being overwritten,
@@ -225,6 +229,10 @@ func openSession(cache cache.Cache) *Session {
 		subJobOrderFns:                map[string]api.CompareFn{},
 		hyperNodeGradientForJobFns:    map[string]api.HyperNodeGradientForJobFn{},
 		hyperNodeGradientForSubJobFns: map[string]api.HyperNodeGradientForSubJobFn{},
+
+		expectedJobReadyFns:  map[string]api.ExpectedJobReadyFns{},
+		discardStatementsFns: map[string]api.DiscardStatementsFns{},
+		jobAllocatedFns:      map[string]api.JobAllocatedFn{},
 	}
 
 	snapshot := cache.Snapshot()

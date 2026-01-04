@@ -386,3 +386,16 @@ type HyperNodeGradientForJobFn func(job *JobInfo, hyperNode *HyperNodeInfo) [][]
 // HyperNodeGradientForSubJobFn group hyperNodes into several gradients,
 // and discard hyperNodes that unmatched the subJob topology requirements.
 type HyperNodeGradientForSubJobFn func(subJob *SubJobInfo, hyperNode *HyperNodeInfo) [][]*HyperNodeInfo
+
+// ExpectedJobReadyFns return whether all subJob groups meet the next expected.
+// stmtList is interface{} to avoid circular dependency, actual type is []*framework.Statement
+type ExpectedJobReadyFns func(job *JobInfo, stmtList interface{}) bool
+
+// DiscardStatementsFns validates and filters out subgroups that do not match the next expected.
+// stmtList is interface{} to avoid circular dependency, actual type is []*framework.Statement
+type DiscardStatementsFns func(job *JobInfo, stmtList interface{}) interface{}
+
+// JobAllocatedFn is called after a job has been allocated resources and the statement has been committed.
+// This allows plugins to update their internal state based on the allocation.
+// stmtList is interface{} to avoid circular dependency, actual type is []*framework.Statement
+type JobAllocatedFn func(job *JobInfo, stmtList interface{})

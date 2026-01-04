@@ -1107,5 +1107,10 @@ func getSubGroupPolicy(taskSpec batch.TaskSpec) scheduling.SubGroupPolicySpec {
 		}
 		subGroupPolicy.NetworkTopology = nt
 	}
+
+	if len(taskSpec.PartitionPolicy.ExpectedPartitions) > 0 {
+		subGroupPolicy.ExpectedSubGroups = make([]int32, len(taskSpec.PartitionPolicy.ExpectedPartitions))
+		copy(subGroupPolicy.ExpectedSubGroups, taskSpec.PartitionPolicy.ExpectedPartitions)
+	}
 	return subGroupPolicy
 }

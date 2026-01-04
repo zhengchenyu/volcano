@@ -50,6 +50,7 @@ func ApplyPluginConfDefaults(option *conf.PluginOption) {
 	setDefaultIfNil(&option.EnabledSubJobPipelined)
 	setDefaultIfNil(&option.EnabledSubJobOrder)
 	setDefaultIfNil(&option.EnabledHyperNodeGradient)
+	setDefaultIfNil(&option.EnabledExpectedPartitions)
 }
 
 func setDefaultIfNil(field **bool) {

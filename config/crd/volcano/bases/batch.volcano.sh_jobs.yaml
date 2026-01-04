@@ -163,6 +163,11 @@ spec:
                       type: string
                     partitionPolicy:
                       properties:
+                        expectedPartitions:
+                          items:
+                            format: int32
+                            type: integer
+                          type: array
                         minPartitions:
                           default: 0
                           format: int32
